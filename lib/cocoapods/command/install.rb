@@ -33,6 +33,7 @@ module Pod
           ['--deployment', 'Disallow any changes to the Podfile or the Podfile.lock during installation'],
           ['--clean-install', 'Ignore the contents of the project cache and force a full pod installation. This only ' \
             'applies to projects that have enabled incremental installation'],
+          ['--force-fetch', 'Force re-downloading all external source pods, ignoring local cache'],
         ].concat(super).reject { |(name, _)| name == '--no-repo-update' }
       end
 
@@ -40,6 +41,7 @@ module Pod
         super
         @deployment = argv.flag?('deployment', false)
         @clean_install = argv.flag?('clean-install', false)
+        @force_fetch = argv.flag?('force-fetch', false)
       end
 
       def run
@@ -49,6 +51,7 @@ module Pod
         installer.update = false
         installer.deployment = @deployment
         installer.clean_install = @clean_install
+        installer.force_fetch = @force_fetch
         installer.install!
       end
     end

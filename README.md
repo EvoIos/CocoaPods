@@ -1,87 +1,100 @@
-# ⚠️ CocoaPods is in maintenance mode
+# CocoaPods - Pre-download 优化版
 
-Cocoapods is not receiving active development. Refer to [the blog](https://blog.cocoapods.org/) for the latest status of the project.
+基于 [CocoaPods](https://github.com/CocoaPods/CocoaPods) 的 fork，优化了 `pod install` 时对外部源依赖的 pre-download 行为。
 
----
+## 问题
 
-![CocoaPods Logo](https://raw.github.com/CocoaPods/shared_resources/master/assets/cocoapods-banner-readme.png)
+CocoaPods 对使用 `:git` + `:tag`/`:commit`/`:branch` 的依赖，每次 `pod install` 都会执行 pre-download（git clone），即使本地已有正确版本的缓存。这在有大量私有 git 依赖的项目中非常耗时。
 
-### CocoaPods: The Cocoa dependency manager
+## 解决方案
 
-[![Build Status](https://github.com/CocoaPods/CocoaPods/workflows/Specs/badge.svg)](https://github.com/CocoaPods/CocoaPods/actions/workflows/Specs.yml)
-[![Gem Version](https://img.shields.io/gem/v/cocoapods)](https://rubygems.org/gems/cocoapods)
-[![Maintainability](https://api.codeclimate.com/v1/badges/8f0fe544baf2ae1acc2b/maintainability)](https://codeclimate.com/github/CocoaPods/CocoaPods/maintainability)
-[![Test Coverage](https://api.codeclimate.com/v1/badges/8f0fe544baf2ae1acc2b/test_coverage)](https://codeclimate.com/github/CocoaPods/CocoaPods/test_coverage)
+在 `fetch_external_sources` 阶段增加智能缓存判断：
 
-CocoaPods manages dependencies for your Xcode projects.
+- **所有外部依赖**：如果 lockfile 和 sandbox manifest 的 checkout options 一致且本地文件完整，跳过 pre-download
+- **新增 `--force-fetch` 选项**：强制重新下载所有外部源
+- **`pod update`**：仍然会强制重新下载
 
-You specify the dependencies for your project in a simple text file: your `Podfile`. 
-CocoaPods recursively resolves dependencies between libraries, fetches 
-source code for all dependencies, and creates and maintains an Xcode 
-workspace to build your project. The latest released Xcode versions and the 
-prior version are supported.
+## 修改的文件
 
-Installing and updating CocoaPods is very easy. Don't miss the [Installation
-guide](https://guides.cocoapods.org/using/getting-started.html#installation) and the
-[Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+| 文件 | 修改内容 |
+|------|---------|
+| `lib/cocoapods/installer/analyzer.rb` | 新增 `skip_fetch_for_external_source?` 方法，在 `fetch_external_sources` 中判断是否跳过 |
+| `lib/cocoapods/installer.rb` | 新增 `force_fetch` 属性，传递到 Config |
+| `lib/cocoapods/config.rb` | 新增 `force_fetch` 配置项 |
+| `lib/cocoapods/command/install.rb` | 新增 `--force-fetch` 命令行选项 |
 
-## Project Goals
+## 使用方法
 
-CocoaPods aims to improve the engagement with, and discoverability 
-of, third party open-source Cocoa libraries. These
-project goals influence and drive the design of CocoaPods:
+### 环境准备
 
-- Create and share libraries, and use them in your own projects,
-  without creating extra work for library authors. Integrate
-  non-CocoaPods libraries and hack on your own fork of any
-  CocoaPods library with a simple transparent `Podspec` standard.
-- Allow library authors to structure their libraries however they like.
-- Save time for library authors by automating a lot of Xcode work not 
-  related to their libraries' functionality.
-- Support any source management system. (Currently supported are `git`, 
-  `svn`, `mercurial`, `bazaar`, and various types of archives downloaded over HTTP.)
-- Promote a culture of distributed collaboration on pods, but also provide
-  features only possible with a centralised solution to foster a community.
-- Build tools on top of the core Cocoa development system, including those 
-  typically deployed to other operating systems, such as web-services.
-- Provide opinionated and automated integration, but make it completely
-  optional. You may manually integrate your CocoaPods dependencies
-  into your Xcode project as you see fit, with or without a workspace.
-- Solve everyday problems for Cocoa and Xcode developers.
+```bash
+# 1. 安装 Ruby 3.3.6（通过 rbenv，不影响系统 Ruby）
+brew upgrade ruby-build
+rbenv install 3.3.6
 
-## Sponsors
+# 2. 在 iOS 项目 Gemfile 中指向本 fork
+#    gem 'cocoapods', path: '<本仓库路径>'
 
-Lovingly sponsored by a collection of companies, see the footer of [CocoaPods.org](https://cocoapods.org) for an up-to-date list. 
+# 3. 修改项目 .ruby-version
+echo "3.3.6" > .ruby-version
 
-## Collaborate
+# 4. 注释掉 Gemfile 中的 activesupport 固定版本（与 Ruby 3.3 不兼容）
+#    gem "activesupport", "6.1.7.4"  → 注释掉这行
 
-All CocoaPods development happens on GitHub. Contributions make for good karma and
-we [welcome new](https://blog.cocoapods.org/starting-open-source/) contributors with joy. We take contributors seriously, and thus have a 
-contributor [code of conduct](CODE_OF_CONDUCT.md).
+# 5. 删掉旧的 Gemfile.lock 重新解析
+rm Gemfile.lock
+bundle install
 
-## Links
+# 6. 让 git 忽略这些本地改动（不影响团队）
+git update-index --assume-unchanged .ruby-version Gemfile Gemfile.lock
+```
 
-| Link | Description |
-| :----- | :------ |
-[CocoaPods.org](https://cocoapods.org/) | Homepage and search for Pods.
-[@CocoaPods](https://twitter.com/CocoaPods) | Follow CocoaPods on Twitter to stay up to date.
-[Blog](https://blog.cocoapods.org) | The CocoaPods blog.
-[Mailing List](https://groups.google.com/group/cocoapods) | Feel free to ask any kind of question.
-[Guides](https://guides.cocoapods.org) | Everything you want to know about CocoaPods.
-[Changelog](https://github.com/CocoaPods/CocoaPods/blob/master/CHANGELOG.md) | See the changes introduced in each CocoaPods version.
-[New Pods RSS](https://feeds.cocoapods.org/new-pods.rss) | Don't miss any new Pods.
-[Code of Conduct](CODE_OF_CONDUCT.md) | Find out the standards we hold ourselves to.
+> `git update-index --assume-unchanged` 的作用：告诉 git "假装这些文件没改过"。
+> `git status` 不会显示它们，`git add .` 也不会提交它们。纯本地操作，不影响远端。
+>
+> 恢复：`git update-index --no-assume-unchanged .ruby-version Gemfile Gemfile.lock`
 
-## Projects
+### 正常使用
 
-CocoaPods is composed of the following projects:
+```bash
+bundle exec pod install
 
-| Status    | Project | Description | Info |
-| :-------- | :------ | :--- | :--- |
-| [![Build Status](https://github.com/CocoaPods/CocoaPods/workflows/Specs/badge.svg)](https://github.com/CocoaPods/CocoaPods/actions/workflows/Specs.yml) | [CocoaPods](https://github.com/CocoaPods/CocoaPods) | The CocoaPods command line tool. | [guides](https://guides.cocoapods.org)
-| [![Build Status](https://github.com/CocoaPods/Core/workflows/Specs/badge.svg)](https://github.com/CocoaPods/Core/actions/workflows/Specs.yml) | [CocoaPods Core](https://github.com/CocoaPods/Core) | Support for working with specifications and podfiles. | [docs](https://guides.cocoapods.org/contributing/components.html)
-| [![Build Status](https://github.com/CocoaPods/cocoapods-downloader/workflows/Specs/badge.svg)](https://github.com/CocoaPods/cocoapods-downloader/actions/workflows/Specs.yml) |[CocoaPods Downloader](https://github.com/CocoaPods/cocoapods-downloader) |  Downloaders for various source types. |  [docs](https://www.rubydoc.info/gems/cocoapods-downloader)
-| [![Build Status](https://github.com/CocoaPods/Xcodeproj/workflows/Specs/badge.svg)](https://github.com/CocoaPods/Xcodeproj/actions/workflows/Specs.yml) | [Xcodeproj](https://github.com/CocoaPods/Xcodeproj) | Create and modify Xcode projects from Ruby. |  [docs](https://www.rubydoc.info/gems/xcodeproj)
-| [![Build Status](https://github.com/CocoaPods/CLAide/workflows/ci/badge.svg)](https://github.com/CocoaPods/CLAide/actions/workflows/ci.yml) | [CLAide](https://github.com/CocoaPods/CLAide) | A small command-line interface framework.  | [docs](https://www.rubydoc.info/gems/claide)
-| [![Build Status](https://github.com/CocoaPods/Molinillo/workflows/test/badge.svg)](https://github.com/CocoaPods/Molinillo/actions/workflows/test.yml) | [Molinillo](https://github.com/CocoaPods/Molinillo) | A powerful generic dependency resolver.  | [docs](https://www.rubydoc.info/gems/molinillo)
-|  | [Master Repo ](https://github.com/CocoaPods/Specs) | Master repository of specifications. | [guides](https://guides.cocoapods.org/making/specs-and-specs-repo.html)
+# 输出示例：
+# Fetching external sources
+#   Using cache for `MMKV` (unchanged tag `2.0.2.3`)
+#   Using cache for `MMKVCore` (unchanged tag `2.0.2.3`)
+#   Using cache for `SomeLib` (unchanged branch `dev`)
+```
+
+### 强制重新下载
+
+```bash
+# 强制重新下载所有外部源
+bundle exec pod install --force-fetch
+
+# 更新特定 pod 到最新
+bundle exec pod update MMKV
+```
+
+## 跳过条件
+
+以下条件**全部满足**时才会跳过 pre-download：
+
+1. 不是 `--force-fetch` 模式
+2. 不是 `pod update`（全量更新）模式
+3. 不是正在被 `pod update PodName` 指定更新的 pod
+4. Lockfile 和 Sandbox Manifest 都存在
+5. Sandbox 中 pod 目录存在
+6. Sandbox 中 podspec 文件存在
+7. Lockfile 中的 checkout options 与 Sandbox manifest 一致
+8. 对于 tag/commit 依赖：Podfile 中的值与 Lockfile 记录一致
+
+任何一个条件不满足，都会回退到标准 pre-download 流程。
+
+## 注意事项
+
+- 首次 `pod install`（无 Podfile.lock）不会跳过任何下载
+- 从 `:path` 切换到 `:git` 后第一次需要下载，之后就会被缓存
+- 要更新 branch 依赖到最新代码，用 `pod update PodName`
+- Tag 被 force push 后，用 `--force-fetch` 或 `pod update PodName`
+- verbose 模式（`--verbose`）会显示跳过原因的调试信息

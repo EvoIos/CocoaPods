@@ -118,6 +118,12 @@ module Pod
     attr_accessor :clean_install
     alias_method :clean_install?, :clean_install
 
+    # @return [Boolean] Whether installation should force re-downloading all
+    # external source pods, ignoring local cache.
+    #
+    attr_accessor :force_fetch
+    alias_method :force_fetch?, :force_fetch
+
     #-------------------------------------------------------------------------#
 
     private
@@ -228,6 +234,8 @@ module Pod
         ensure_plugins_are_installed!
         run_plugins_pre_install_hooks
       end
+      # Propagate force_fetch flag to config so the analyzer can access it
+      config.force_fetch = force_fetch if force_fetch
     end
 
     # @return [Analyzer] The analyzer used to resolve dependencies

@@ -80,6 +80,12 @@ module Pod
     attr_accessor :skip_download_cache
     alias_method :skip_download_cache?, :skip_download_cache
 
+    # @return [Boolean] Whether the installer should force re-downloading all
+    #         external source pods, ignoring local cache optimization.
+    #
+    attr_accessor :force_fetch
+    alias_method :force_fetch?, :force_fetch
+
     public
 
     #-------------------------------------------------------------------------#
