@@ -1022,12 +1022,16 @@ module Pod
           return false
         end
 
+        # Never skip path-based (local development) pods - they must always be fetched
+        # to ensure sandbox.store_local_path is called and the pod is properly marked as local
+        external_source = dependency.external_source
+        return false if external_source && external_source[:path]
+
         unless lockfile && sandbox.manifest
           UI.message "  [skip_fetch] #{dependency.root_name}: no lockfile or manifest" if config.verbose?
           return false
         end
 
-        external_source = dependency.external_source
         unless external_source
           UI.message "  [skip_fetch] #{dependency.root_name}: no external_source" if config.verbose?
           return false
@@ -1112,6 +1116,16 @@ module Pod
                 !dep.external_source[:path].nil? ||
                 !sandbox.pod_dir(dep.root_name).directory? ||
                 checkout_requires_update?(dep)
+            end
+
+            # Safety net: path-based pods must always be fetched to ensure
+            # sandbox.store_local_path is called. Without this, the pod won't be
+            # recognized as a development pod and Xcode will reference stale files.
+            path_deps = deps_with_external_source.select { |dep| dep.external_source[:path] }
+            path_deps.each do |dep|
+              unless deps_to_fetch.any? { |d| d.root_name == dep.root_name }
+                deps_to_fetch << dep
+              end
             end
           end
           deps_to_fetch.uniq(&:root_name)
