@@ -88,6 +88,7 @@ bundle exec pod update MMKV
 6. Sandbox 中 podspec 文件存在
 7. Lockfile 中的 checkout options 与 Sandbox manifest 一致
 8. 对于 tag/commit 依赖：Podfile 中的值与 Lockfile 记录一致
+9. 该 pod 在 Podfile 中未被新增或修改（状态为 `added`/`changed` 时强制重新下载）
 
 任何一个条件不满足，都会回退到标准 pre-download 流程。
 

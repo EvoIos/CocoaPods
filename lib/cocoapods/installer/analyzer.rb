@@ -973,7 +973,7 @@ module Pod
         return if deps.empty?
         UI.section 'Fetching external sources' do
           deps.sort.each do |dependency|
-            if skip_fetch_for_external_source?(dependency)
+            if skip_fetch_for_external_source?(dependency, podfile_state)
               UI.message "Using cache for `#{dependency.root_name}` (unchanged #{external_source_ref_description(dependency)})"
             else
               fetch_external_source(dependency, !pods.include?(dependency.root_name))
@@ -1008,9 +1008,12 @@ module Pod
       # @param [Dependency] dependency
       #        the dependency to check.
       #
+      # @param [SpecsState] podfile_state
+      #        the state of the Podfile for the current installation.
+      #
       # @return [Boolean] whether the fetch can be skipped.
       #
-      def skip_fetch_for_external_source?(dependency)
+      def skip_fetch_for_external_source?(dependency, podfile_state)
         # Never skip if force fetch is enabled
         return false if config.force_fetch?
 
@@ -1019,6 +1022,14 @@ module Pod
 
         # Never skip if this specific pod is being updated
         if update_mode == :selected && pods_to_update[:pods]&.include?(dependency.root_name)
+          return false
+        end
+
+        # Never skip when the Podfile entry was added or changed: its source
+        # definition may differ from what the lockfile/sandbox recorded (e.g. a
+        # different branch), so it must be re-fetched.
+        if podfile_state.added.include?(dependency.root_name) || podfile_state.changed.include?(dependency.root_name)
+          UI.message "  [skip_fetch] #{dependency.root_name}: podfile state changed" if config.verbose?
           return false
         end
 
