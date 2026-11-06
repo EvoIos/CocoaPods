@@ -2648,6 +2648,30 @@ module Pod
         @analyzer.send(:fetch_external_sources, podfile_state)
       end
 
+      it 'ignores lockfile checkout options when force fetch is enabled' do
+        podfile_state = Installer::Analyzer::SpecsState.new
+        podfile_state.unchanged << 'BananaLib'
+
+        @analyzer.stubs(:force_fetch?).returns(true)
+
+        downloader = stub('DownloaderSource')
+        ExternalSources.stubs(:from_params).with(@dependency.external_source, @dependency, @podfile.defined_in_file,
+                                                 true).returns(downloader)
+
+        downloader.expects(:fetch)
+        @analyzer.send(:fetch_external_sources, podfile_state)
+      end
+
+      it 'fetches every external source when force fetch is enabled' do
+        podfile_state = Installer::Analyzer::SpecsState.new
+        podfile_state.unchanged << 'BananaLib'
+
+        @analyzer.stubs(:force_fetch?).returns(true)
+
+        @analyzer.expects(:fetch_external_source).with(@dependency, false)
+        @analyzer.send(:fetch_external_sources, podfile_state)
+      end
+
       it 'ignores lockfile checkout options when updating all pods' do
         podfile_state = Installer::Analyzer::SpecsState.new
         podfile_state.unchanged << 'BananaLib'

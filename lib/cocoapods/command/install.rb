@@ -33,7 +33,9 @@ module Pod
           ['--deployment', 'Disallow any changes to the Podfile or the Podfile.lock during installation'],
           ['--clean-install', 'Ignore the contents of the project cache and force a full pod installation. This only ' \
             'applies to projects that have enabled incremental installation'],
-          ['--force-fetch', 'Force re-downloading all external source pods, ignoring local cache'],
+          ['--force-fetch', 'Re-fetch all external source pods using their Podfile definitions instead of the ' \
+            'commit/tag recorded in the lockfile. Branch-based dependencies are resolved to the remote HEAD ' \
+            'and the lockfile is updated accordingly'],
         ].concat(super).reject { |(name, _)| name == '--no-repo-update' }
       end
 

@@ -937,6 +937,10 @@ module Pod
         else
           deleted_and_changed = podfile_state.changed + podfile_state.deleted
           deleted_and_changed += pods_to_update[:pods] if update_mode == :selected
+          # `--force-fetch` re-resolves external sources, so their previously
+          # locked versions must not constrain the resolver (a moved branch can
+          # contain a podspec with a different version).
+          deleted_and_changed += external_source_pod_names if force_fetch?
           local_pod_names = podfile_dependencies.select(&:local?).map(&:root_name)
           pods_to_unlock = local_pod_names.to_set.delete_if do |pod_name|
             next unless sandbox_specification = sandbox.specification(pod_name)
@@ -973,11 +977,11 @@ module Pod
         return if deps.empty?
         UI.section 'Fetching external sources' do
           deps.sort.each do |dependency|
-            if skip_fetch_for_external_source?(dependency, podfile_state)
-              UI.message "Using cache for `#{dependency.root_name}` (unchanged #{external_source_ref_description(dependency)})"
-            else
-              fetch_external_source(dependency, !pods.include?(dependency.root_name))
-            end
+            # `--force-fetch` must ignore the checkout options recorded in the
+            # lockfile, otherwise branch-based dependencies would only be
+            # cloned at the commit they were previously locked to.
+            use_lockfile_options = !force_fetch? && !pods.include?(dependency.root_name)
+            fetch_external_source(dependency, use_lockfile_options)
           end
         end
       end
@@ -1001,123 +1005,12 @@ module Pod
         source.fetch(sandbox)
       end
 
-      # Determines whether fetching an external source can be skipped because
-      # the dependency uses an immutable reference (tag or commit) and the
-      # local sandbox already contains the correct version.
-      #
-      # @param [Dependency] dependency
-      #        the dependency to check.
-      #
-      # @param [SpecsState] podfile_state
-      #        the state of the Podfile for the current installation.
-      #
-      # @return [Boolean] whether the fetch can be skipped.
-      #
-      def skip_fetch_for_external_source?(dependency, podfile_state)
-        # Never skip if force fetch is enabled
-        return false if config.force_fetch?
-
-        # Never skip in full update mode (pod update)
-        return false if update_mode == :all
-
-        # Never skip if this specific pod is being updated
-        if update_mode == :selected && pods_to_update[:pods]&.include?(dependency.root_name)
-          return false
-        end
-
-        # Never skip when the Podfile entry was added or changed: its source
-        # definition may differ from what the lockfile/sandbox recorded (e.g. a
-        # different branch), so it must be re-fetched.
-        if podfile_state.added.include?(dependency.root_name) || podfile_state.changed.include?(dependency.root_name)
-          UI.message "  [skip_fetch] #{dependency.root_name}: podfile state changed" if config.verbose?
-          return false
-        end
-
-        # Never skip path-based (local development) pods - they must always be fetched
-        # to ensure sandbox.store_local_path is called and the pod is properly marked as local
-        external_source = dependency.external_source
-        return false if external_source && external_source[:path]
-
-        unless lockfile && sandbox.manifest
-          UI.message "  [skip_fetch] #{dependency.root_name}: no lockfile or manifest" if config.verbose?
-          return false
-        end
-
-        unless external_source
-          UI.message "  [skip_fetch] #{dependency.root_name}: no external_source" if config.verbose?
-          return false
-        end
-
-        # Check that the sandbox pod directory exists
-        pod_dir = sandbox.pod_dir(dependency.root_name)
-        unless pod_dir.directory?
-          UI.message "  [skip_fetch] #{dependency.root_name}: pod_dir not found (#{pod_dir})" if config.verbose?
-          return false
-        end
-
-        # Check that the podspec exists in the sandbox
-        if sandbox.specification_path(dependency.root_name).nil?
-          UI.message "  [skip_fetch] #{dependency.root_name}: specification_path is nil" if config.verbose?
-          return false
-        end
-
-        # Compare checkout options: lockfile vs sandbox manifest
-        # If they match, the local copy is up-to-date
-        locked_checkout_options = lockfile.checkout_options_for_pod_named(dependency.root_name)
-        sandbox_checkout_options = sandbox.manifest.checkout_options_for_pod_named(dependency.root_name)
-        unless locked_checkout_options && sandbox_checkout_options
-          UI.message "  [skip_fetch] #{dependency.root_name}: checkout_options missing (locked=#{locked_checkout_options.inspect}, sandbox=#{sandbox_checkout_options.inspect})" if config.verbose?
-          return false
-        end
-        unless locked_checkout_options == sandbox_checkout_options
-          UI.message "  [skip_fetch] #{dependency.root_name}: checkout_options mismatch (locked=#{locked_checkout_options.inspect} vs sandbox=#{sandbox_checkout_options.inspect})" if config.verbose?
-          return false
-        end
-
-        # For tag/commit based deps: also verify Podfile params haven't changed
-        has_tag = external_source.key?(:tag)
-        has_commit = external_source.key?(:commit)
-        if has_tag && locked_checkout_options[:tag] != external_source[:tag]
-          return false
-        end
-        if has_commit && locked_checkout_options[:commit] != external_source[:commit]
-          return false
-        end
-
-        # For branch based deps: lockfile already locks to a specific commit,
-        # so if the locked commit matches the sandbox manifest, local copy is valid.
-        # No need to re-clone the entire repo just to checkout the same commit.
-
-        true
-      end
-
-      # Returns a human-readable description of the external source reference
-      # for logging purposes.
-      #
-      # @param [Dependency] dependency
-      #        the dependency to describe.
-      #
-      # @return [String] description of the reference (tag or commit).
-      #
-      def external_source_ref_description(dependency)
-        external_source = dependency.external_source
-        if external_source[:tag]
-          "tag `#{external_source[:tag]}`"
-        elsif external_source[:commit]
-          "commit `#{external_source[:commit][0, 10]}`"
-        elsif external_source[:branch]
-          "branch `#{external_source[:branch]}`"
-        else
-          'source'
-        end
-      end
-
       def dependencies_to_fetch(podfile_state)
         @deps_to_fetch ||= begin
           deps_to_fetch = []
           deps_with_external_source = podfile_dependencies.select(&:external_source)
 
-          if update_mode == :all
+          if force_fetch? || update_mode == :all
             deps_to_fetch = deps_with_external_source
           else
             deps_to_fetch = deps_with_external_source.select { |dep| pods_to_fetch(podfile_state).include?(dep.root_name) }
@@ -1141,6 +1034,22 @@ module Pod
           end
           deps_to_fetch.uniq(&:root_name)
         end
+      end
+
+      # @return [Boolean] whether all external sources should be fetched again,
+      #         ignoring the checkout options recorded in the lockfile. Used by
+      #         `pod install --force-fetch` to resolve branch-based dependencies
+      #         to their remote HEAD (and to re-clone force-pushed tags).
+      #
+      def force_fetch?
+        !!config.force_fetch?
+      end
+
+      # @return [Array<String>] the root names of all the Podfile dependencies
+      #         declared with an external source.
+      #
+      def external_source_pod_names
+        @external_source_pod_names ||= podfile_dependencies.select(&:external_source).map(&:root_name).uniq
       end
 
       def checkout_requires_update?(dependency)

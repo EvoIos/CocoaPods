@@ -1,24 +1,22 @@
-# CocoaPods - Pre-download 优化版
+# CocoaPods - External Source Fetch 控制版
 
-基于 [CocoaPods](https://github.com/CocoaPods/CocoaPods) 的 fork，优化了 `pod install` 时对外部源依赖的 pre-download 行为。
+基于 CocoaPods 1.17.0 的 fork，新增 `--force-fetch`，用于显式地把所有外部源（`:git` + `:branch`/`:tag`/`:commit`）按 Podfile 定义重新拉取，并同步更新 `Podfile.lock`。
 
-## 问题
+## 背景
 
-CocoaPods 对使用 `:git` + `:tag`/`:commit`/`:branch` 的依赖，每次 `pod install` 都会执行 pre-download（git clone），即使本地已有正确版本的缓存。这在有大量私有 git 依赖的项目中非常耗时。
+CocoaPods 的 `pod install` 是"按 `Podfile.lock` 复现安装"，而不是"求解最新"：
 
-## 解决方案
+- `:tag` / `:commit` 是不可变引用，`pod install` 不会改变它们
+- `:branch` 依赖在 `Podfile.lock` 的 `CHECKOUT OPTIONS` 里被钉成具体 commit，远端分支前进不会触发重新拉取
+- `pod repo update` 只刷新 spec 仓库（`~/.cocoapods/repos`），对 `:git` 外部源完全无作用
 
-在 `fetch_external_sources` 阶段增加智能缓存判断：
-
-- **所有外部依赖**：如果 lockfile 和 sandbox manifest 的 checkout options 一致且本地文件完整，跳过 pre-download
-- **新增 `--force-fetch` 选项**：强制重新下载所有外部源
-- **`pod update`**：仍然会强制重新下载
+原生要推进 branch 依赖只能 `pod update POD`。本 fork 增加 `--force-fetch`，让一次 `pod install` 即可把所有外部源重新解析一遍。
 
 ## 修改的文件
 
 | 文件 | 修改内容 |
 |------|---------|
-| `lib/cocoapods/installer/analyzer.rb` | 新增 `skip_fetch_for_external_source?` 方法，在 `fetch_external_sources` 中判断是否跳过 |
+| `lib/cocoapods/installer/analyzer.rb` | `--force-fetch` 下把所有外部源加入 fetch 列表、忽略 lockfile 的 checkout options、并解除版本锁定 |
 | `lib/cocoapods/installer.rb` | 新增 `force_fetch` 属性，传递到 Config |
 | `lib/cocoapods/config.rb` | 新增 `force_fetch` 配置项 |
 | `lib/cocoapods/command/install.rb` | 新增 `--force-fetch` 命令行选项 |
@@ -58,44 +56,27 @@ git update-index --assume-unchanged .ruby-version Gemfile Gemfile.lock
 
 ```bash
 bundle exec pod install
-
-# 输出示例：
-# Fetching external sources
-#   Using cache for `MMKV` (unchanged tag `2.0.2.3`)
-#   Using cache for `MMKVCore` (unchanged tag `2.0.2.3`)
-#   Using cache for `SomeLib` (unchanged branch `dev`)
 ```
 
-### 强制重新下载
+未变化的 tag/commit/branch 依赖不会重新 clone（CocoaPods 原生行为），branch 依赖保持 `Podfile.lock` 里锁定的 commit。
+
+### 强制重新拉取所有外部源
 
 ```bash
-# 强制重新下载所有外部源
 bundle exec pod install --force-fetch
-
-# 更新特定 pod 到最新
-bundle exec pod update MMKV
 ```
 
-## 跳过条件
+- `:branch` 依赖 → 按 Podfile 的 branch 重新解析远端 HEAD，并更新 `Podfile.lock`
+- `:tag` 依赖 → 重新 clone（tag 被 force push 过也能拿到新内容）
+- `:path` 依赖 → 重新登记本地路径
 
-以下条件**全部满足**时才会跳过 pre-download：
-
-1. 不是 `--force-fetch` 模式
-2. 不是 `pod update`（全量更新）模式
-3. 不是正在被 `pod update PodName` 指定更新的 pod
-4. Lockfile 和 Sandbox Manifest 都存在
-5. Sandbox 中 pod 目录存在
-6. Sandbox 中 podspec 文件存在
-7. Lockfile 中的 checkout options 与 Sandbox manifest 一致
-8. 对于 tag/commit 依赖：Podfile 中的值与 Lockfile 记录一致
-9. 该 pod 在 Podfile 中未被新增或修改（状态为 `added`/`changed` 时强制重新下载）
-
-任何一个条件不满足，都会回退到标准 pre-download 流程。
+```bash
+# 只更新指定 pod（推荐，影响面更小，不会改动其他依赖）
+bundle exec pod update POD_NAME
+```
 
 ## 注意事项
 
-- 首次 `pod install`（无 Podfile.lock）不会跳过任何下载
-- 从 `:path` 切换到 `:git` 后第一次需要下载，之后就会被缓存
-- 要更新 branch 依赖到最新代码，用 `pod update PodName`
-- Tag 被 force push 后，用 `--force-fetch` 或 `pod update PodName`
-- verbose 模式（`--verbose`）会显示跳过原因的调试信息
+- `pod install --force-fetch` 会改写 `Podfile.lock`（branch 依赖的新 commit），等同于对 git 依赖做了一次 update；它和 `--deployment` 语义冲突，不要一起用
+- 版本号来源的 pod（`pod 'X', '1.2.3'`）不受 `--force-fetch` 影响，更新它们仍用 `pod update`
+- 只更新单个/部分依赖时优先用 `pod update POD_NAME`
